@@ -1,0 +1,113 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © OTL Fixed
+
+//@version=5
+indicator(title="Market Profile Fixed View", shorttitle="MPFV", overlay=true, max_bars_back=1000, max_boxes_count = 500)
+
+invert_colors = input.bool(title="Invert colors", defval=false, group='Color options', group="Display Options")
+color_style = input.string("R/G", options=["R/G", "G/B", "B/R"], title="Shading colors", group="Display Options")
+z_color = input.int(0, "Third Color", minval=0, maxval=255, group="Display Options")
+trans = input.int(30, "Transparency", minval=0, maxval=100, group="Display Options")
+
+bars_nb = input.int(100, "Bars number", maxval=200, minval=3, group="Display Options")
+black_borders = input.bool(false, "Black borders on bars", group="Display Options")
+display_width = input.int(1, "Display width", group="Display Options")
+limits_color=input.color(#00bcd4bb, "High and Low colors", group="Display Options")
+bg_color=input.color(#40aec920, "Market profile area background color", group="Display Options")
+poc_col = input.color(#ff0000, "Poc color", group="Display Options")
+show_poc = input.bool(true, "Show POC", group="Display Options")
+extend_poc = input.bool(false, "Extend POC", group="Display Options")
+show_box_background = input.bool(true, "Show Market Profile area background", group="Display Options")
+show_histogram = input.bool(true, "Show histogram", group="Display Options")
+show_high_low = input.bool(true, "Show high/low levels", group="Display Options")
+startCalculationDate = input.time(timestamp("20 Jan 2021"), "Start Calculation", confirm=true, group="Data")
+endCalculationDate = input.time(timestamp("20 Jan 2021"), "End Calculation", confirm=true, group="Data")
+
+
+var line topline = na
+var line botline = na
+var line poc = na
+var int beg_offset = 0
+var int end_offset = 0
+var max_score = 0
+var poc_price = 0.0
+var float box_width = 0
+var bars_score = array.new<int>(bars_nb)
+var profile_bars = array.new<box>(bars_nb)
+
+color_value(value, transp=0) =>
+    step = (255/100.0)
+    d = value * step
+    x = 0.0
+    y = 0.0
+    z = z_color
+    if invert_colors
+        y := value < 50 ? d : 127
+        x := value < 50 ? 127: 255 - d
+    else
+        x := value < 50 ? d : 127
+        y := value < 50 ? 127: 255 - d
+
+    col = color.rgb(math.round(x), math.round(y), math.round(z), transp)
+    if color_style == "B/R"
+        col := color.rgb(math.round(y), math.round(z), math.round(x), transp)        
+    if color_style == "G/B"
+        col := color.rgb(math.round(z), math.round(x), math.round(y), transp)
+    col
+
+find_h(x, y) =>
+    h = high
+    for i=x to y
+        if high[i] > h
+            h := high[i]
+    h
+find_l(x, y) =>
+    l = low
+    for i=x to y
+        if low[i] < l
+            l := low[i]
+    l
+
+defined = false
+if time >= startCalculationDate
+    beg_offset += 1
+if time >= endCalculationDate
+    end_offset += 1
+    defined := true
+
+if not defined[1] and defined
+    h = find_h(beg_offset, end_offset)
+    l = find_l(beg_offset, end_offset)
+    if show_high_low
+        topline := line.new(bar_index-beg_offset, h, bar_index-end_offset, h, color=limits_color)
+        botline := line.new(bar_index-beg_offset, l, bar_index-end_offset, l, color=limits_color)
+    
+    if show_box_background
+        box.new(bar_index-beg_offset, h, bar_index-end_offset, l, bgcolor=bg_color, border_color=#00000000)
+    
+    if show_poc
+        ext = extend_poc ? extend.right : extend.none
+        poc := line.new(bar_index-beg_offset, 0.0, bar_index-end_offset, 0.0, color=poc_col, width=2, extend=ext)
+    
+    box_width := (h - l) / (bars_nb)
+    for i=0 to bars_nb-1
+        score = 0
+        for x=0 to beg_offset
+            // Candle is in current bar
+            in_bar = (high[x] <= h and high[x] >= h-box_width) or (low[x] <= h and low[x] >= h-box_width) or (high[x] > h and low[x] < h-box_width)
+            if in_bar
+                score += display_width
+        if score > max_score
+            max_score := score
+            poc_price :=  h - (box_width/2)
+        line.set_y1(poc, poc_price)
+        line.set_y2(poc, poc_price)
+        
+        array.insert(profile_bars,i, box.new(bar_index-beg_offset, h, bar_index-(beg_offset-score), h-box_width))
+        array.insert(bars_score,i, score)
+        h -= box_width
+    for i=0 to bars_nb-1
+        f = 100 / max_score
+        bar_col = show_histogram ? color_value(array.get(bars_score, i)*f, trans) : na
+        box.set_bgcolor(array.get(profile_bars, i), bar_col)
+        box.set_border_color(array.get(profile_bars, i), (black_borders ? #000000 : bar_col))
